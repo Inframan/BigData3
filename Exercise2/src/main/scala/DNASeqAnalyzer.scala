@@ -93,7 +93,7 @@ def compareSam(s1: SAMRecord,s2: SAMRecord) : Boolean =
 	if(s1.getReferenceIndex == s2.getReferenceIndex)
 		return s1.getAlignmentStart < s2.getAlignmentStart
 	else 
-		return s1.getReferenceIndex > s2.getReferenceIndex
+		return s1.getReferenceIndex < s2.getReferenceIndex
 }
 
 def variantCall (chrRegion: Int, samRecordsSorted: Array[SAMRecord], config: Configuration) : 
@@ -113,7 +113,7 @@ def variantCall (chrRegion: Int, samRecordsSorted: Array[SAMRecord], config: Con
 	var sortedArray = samRecordsSorted.sortWith((s1: SAMRecord, s2: SAMRecord) => compareSam(s1,s2))
 
 	// SAM records should be sorted by this point
-	val chrRange = writeToBAM(tmpFolder + "region" + chrRegion + "-p1.bam", samRecordsSorted, config)
+	val chrRange = writeToBAM(tmpFolder + "region" + chrRegion + "-p1.bam", sortedArray, config)
 	
 	// Picard preprocessing
 	//	java MemString -jar toolsFolder/CleanSam.jar INPUT=tmpFolder/regionX-p1.bam OUTPUT=tmpFolder/regionX-p2.bam
@@ -127,7 +127,7 @@ def variantCall (chrRegion: Int, samRecordsSorted: Array[SAMRecord], config: Con
 	// 	java MemString -jar toolsFolder/BuildBamIndex.jar INPUT=tmpFolder/regionX.bam
 	val picard4 = Seq("java",MemString,"-jar",toolsFolder + "BuildBamIndex.jar","INPUT="+tmpFolder+"region"+chrRegion+".bam").!
 	//	delete tmpFolder/regionX-p1.bam, tmpFolder/regionX-p2.bam, tmpFolder/regionX-p3.bam and tmpFolder/regionX-p3-metrics.txt
-	val picard5 = Seq("delete",tmpFolder+"region"+chrRegion+"-p1.bam",tmpFolder+"region"+chrRegion+"-p2.bam",tmpFolder+"region"+chrRegion+"-p3.bam",tmpFolder+"region"+chrRegion+"-p3-metrics.txt").!
+	val picard5 = Seq("rm",tmpFolder+"region"+chrRegion+"-p1.bam",tmpFolder+"region"+chrRegion+"-p2.bam",tmpFolder+"region"+chrRegion+"-p3.bam",tmpFolder+"region"+chrRegion+"-p3-metrics.txt").!
 
 
 	// Make region file 
@@ -136,7 +136,7 @@ def variantCall (chrRegion: Int, samRecordsSorted: Array[SAMRecord], config: Con
 	//	toolsFolder/bedtools intersect -a refFolder/ExomeFileName -b tmpFolder/tmpX.bed -header > tmpFolder/bedX.bed
 	val reg1 = Seq(toolsFolder+"bedtools","intersect","-a",refFolder+ExomeFileName,"-b",tmpFolder+"tmp"+chrRegion+".bed","-header") #> new File(tmpFolder+"bed"+chrRegion+".bed") !
 	//	delete tmpFolder/tmpX.bed
-	val reg2 = Seq("delete",tmpFolder+"temp"+chrRegion+".bed").!
+	val reg2 = Seq("rm",tmpFolder+"tmp"+chrRegion+".bed").!
 	
 	// Indel Realignment 
 	//	java MemString -jar toolsFolder/GenomeAnalysisTK.jar -T RealignerTargetCreator -nt numOfThreads -R refFolder/RefFileName 
@@ -146,31 +146,33 @@ def variantCall (chrRegion: Int, samRecordsSorted: Array[SAMRecord], config: Con
 	//		-targetIntervals tmpFolder/regionX.intervals -o tmpFolder/regionX-2.bam -L tmpFolder/bedX.bed
 	val indR2 = Seq("java",MemString,"-jar",toolsFolder + "GenomeAnalysisTK.jar","-T","IndelRealigner", "-R", refFolder+RefFileName, "-I", tmpFolder+"region"+chrRegion+".bam","-L",tmpFolder+"bed"+chrRegion+".bed", "-targetIntervals", tmpFolder+"region"+chrRegion+".intervals", "-o", tmpFolder+"region"+chrRegion+"-2.bam","-L",tmpFolder+"bed"+chrRegion+".bed").!
 	//	delete tmpFolder/regionX.bam, tmpFolder/regionX.bai, tmpFolder/regionX.intervals
-	val indR3 = Seq("delete",tmpFolder+"region"+chrRegion+".bam", tmpFolder+"region"+chrRegion+".bai", tmpFolder+"region"+chrRegion+".intervals").!
+	val indR3 = Seq("rm",tmpFolder+"region"+chrRegion+".bam", tmpFolder+"region"+chrRegion+".bai", tmpFolder+"region"+chrRegion+".intervals").!
 
 
 	// Base quality recalibration 
 	//	java MemString -jar toolsFolder/GenomeAnalysisTK.jar -T BaseRecalibrator -nct numOfThreads -R refFolder/RefFileName -I 
 	//		tmpFolder/regionX-2.bam -o tmpFolder/regionX.table -L tmpFolder/bedX.bed --disable_auto_index_creation_and_locking_when_reading_rods
 	//		-knownSites refFolder/SnpFileName
-	val bqr1 = Seq("java",MemString,"-jar",toolsFolder + "GenomeAnalysisTK.jar","-T","BaseRecalibrator", "-nct", numOfThreads, "-R", refFolder+RefFileName, "-I", tmpFolder+"region"+chrRegion+"-2.bam","-o",tmpFolder+"region"+chrRegion+".table","-L",tmpFolder+"bed"+chrRegion+".bed", "--disable_auto_index_creation_and_locking_when_reading_rods", "knownSites", refFolder+SnpFileName).!
+	val bqr1 = Seq("java",MemString,"-jar",toolsFolder + "GenomeAnalysisTK.jar","-T","BaseRecalibrator", "-nct", numOfThreads, "-R", refFolder+RefFileName, "-I", tmpFolder+"region"+chrRegion+"-2.bam","-o",tmpFolder+"region"+chrRegion+".table","-L",tmpFolder+"bed"+chrRegion+".bed", "--disable_auto_index_creation_and_locking_when_reading_rods", "-knownSites", refFolder+SnpFileName).!
 	//	java MemString -jar toolsFolder/GenomeAnalysisTK.jar -T PrintReads -R refFolder/RefFileName -I 
-																																						//		tmpFolder/regionX-2.bam -o tmpFolder/regionX-3.bam -BQSR tmpFolder/regionX.table -L tmpFolder/bedX.bed 
-	val bqr2 = Seq("java",MemString,"-jar",toolsFolder + "GenomeAnalysisTK.jar","-T","PrintReads", "-R", refFolder+RefFileName, "-I", tmpFolder+"region"+chrRegion+"-2.bam","-o",tmpFolder+"bed"+chrRegion+"-3.bam", "-BQSR", tmpFolder+"region"+chrRegion+".table", "-L", tmpFolder+"bed"+chrRegion+".bed").!
+	//		tmpFolder/regionX-2.bam -o tmpFolder/regionX-3.bam -BQSR tmpFolder/regionX.table -L tmpFolder/bedX.bed 
+	val bqr2 = Seq("java",MemString,"-jar",toolsFolder + "GenomeAnalysisTK.jar","-T","PrintReads", "-R", refFolder+RefFileName, "-I", tmpFolder+"region"+chrRegion+"-2.bam","-o",tmpFolder+"region"+chrRegion+"-3.bam", "-BQSR", tmpFolder+"region"+chrRegion+".table", "-L", tmpFolder+"bed"+chrRegion+".bed").!
 	// delete tmpFolder/regionX-2.bam, tmpFolder/regionX-2.bai, tmpFolder/regionX.table
-	val bqr3 = Seq("delete",tmpFolder+"region"+chrRegion+"-2.bam", tmpFolder+"region"+chrRegion+"-1.bai", tmpFolder+"region"+chrRegion+".table").!
+	val bqr3 = Seq("rm",tmpFolder+"region"+chrRegion+"-2.bam", tmpFolder+"region"+chrRegion+"-2.bai", tmpFolder+"region"+chrRegion+".table").!
 
 	// Haplotype -> Uses the region bed file
 	// java MemString -jar toolsFolder/GenomeAnalysisTK.jar -T HaplotypeCaller -nct numOfThreads -R refFolder/RefFileName -I 
 	//		tmpFolder/regionX-3.bam -o tmpFolder/regionX.vcf  -stand_call_conf 30.0 -stand_emit_conf 30.0 -L tmpFolder/bedX.bed 
 	//		--no_cmdline_in_header --disable_auto_index_creation_and_locking_when_reading_rods
-	val hp1 = Seq("java",MemString,"-jar",toolsFolder + "GenomeAnalysisTK.jar","-T","HaplotypeCaller", "-nct", numOfThreads, "-R", refFolder+RefFileName, "-I", tmpFolder+"region"+chrRegion+"-3.bam","-o",tmpFolder+"region"+chrRegion+".vcf","-stand_call_conf","30.0","-L", tmpFolder+"bed"+chrRegion+".bed","--no_cmdline_in_header","--disable_auto_index_creation_and_locking_when_reading_rods").!
+	val hp1 = Seq("java",MemString,"-jar",toolsFolder + "GenomeAnalysisTK.jar","-T","HaplotypeCaller", "-nct", numOfThreads, "-R", refFolder+RefFileName, "-I", tmpFolder+"region"+chrRegion+"-3.bam","-o",tmpFolder+"region"+chrRegion+".vcf","-stand_call_conf","30.0","-stand_emit_conf","30.0","-L", tmpFolder+"bed"+chrRegion+".bed","--no_cmdline_in_header","--disable_auto_index_creation_and_locking_when_reading_rods").lines
 	// delete tmpFolder/regionX-3.bam, tmpFolder/regionX-3.bai, tmpFolder/bedX.bed
-	val hp2 = Seq("delete",tmpFolder+"region"+chrRegion+"-3.bam", tmpFolder+"region"+chrRegion+"-3.bai", tmpFolder+"bed"+chrRegion+".bed").!
-	
+	val hp2 = Seq("rm",tmpFolder+"region"+chrRegion+"-3.bam", tmpFolder+"region"+chrRegion+"-3.bai", tmpFolder+"bed"+chrRegion+".bed").!
+
+
+
 	// return the content of the vcf file produced by the haplotype caller.
 	//	Return those in the form of <Chromsome number, <Chromosome Position, line>>
-	return null // Replace this with what is described in the above 2 lines
+	return Array((0,(0,hp1.toString))) // Replace this with what is described in the above 2 lines
 }
 
 def main(args: Array[String]) 
@@ -237,13 +239,14 @@ def main(args: Array[String])
     //Joins Chromossome region with its SAMRecords, mapping it to
     //(Region, SamRecord)
     //(Int, Array(SamRecord))
-    val regionSamRDD = regionChromoRDD.join(chromoRDD).map(line => (line._2._1, Array[SAMRecord](line._2._2)))
+    val regionSamRDD = regionChromoRDD.join(chromoRDD).mapPartitions(lines => for(line <- lines) yield (line._2._1, Array[SAMRecord](line._2._2)))
     
 
     //Groups every SamRecord with the same region
-    val variantCallRDD = regionSamRDD.reduceByKey(_ ++ _).map(line => variantCall(line._1.toInt, line._2, config))
+    val variantCallRDD = regionSamRDD.reduceByKey(_ ++ _).mapPartitions(lines =>for(line <- lines) yield variantCall(line._1.toInt, line._2, config))
 
-  
+    println("begin_________")
+  	variantCallRDD.take(10).foreach(println)
     //chromoCountRDD.collect.foreach(println)
    // println(chromoRDD.count)
 	
